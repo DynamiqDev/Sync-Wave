@@ -5,6 +5,9 @@ import { useRoom } from '../context/RoomContext';
 import { TrackSource } from '../types';
 import { Visualizer } from './Visualizer';
 
+// Fix for ReactPlayer type mismatch where 'url' prop is not recognized in some TS environments
+const ReactPlayerAny = ReactPlayer as any;
+
 export const Player: React.FC = () => {
   const { roomState, isDJ, updateSync, broadcastSeek, audioStream, setLocalStream, skipTrack } = useRoom();
   const { currentTrack, isPlaying, timestamp, lastUpdated } = roomState;
@@ -176,28 +179,36 @@ export const Player: React.FC = () => {
   useEffect(() => {
     if (isDJ) return; 
 
-    const latency = (Date.now() - lastUpdated) / 1000;
-    const targetTime = timestamp + (isPlaying ? latency : 0);
-    const SYNC_THRESHOLD = 2.5; 
+    // Calculate playhead position based on time elapsed since the packet arrived
+    const timeSincePacket = (Date.now() - lastUpdated) / 1000;
+    const targetTime = timestamp + (isPlaying ? timeSincePacket : 0);
+    
+    // TIGHT SYNC THRESHOLD (0.5s)
+    const SYNC_THRESHOLD = 0.5; 
 
-    // Sync YouTube
+    // 1. Sync YouTube
     if (currentTrack?.source === TrackSource.YOUTUBE && playerRef.current) {
       const current = playerRef.current.getCurrentTime?.() || 0;
-      if (Math.abs(current - targetTime) > SYNC_THRESHOLD) {
+      const diff = Math.abs(current - targetTime);
+
+      // If drifted significantly, seek
+      if (diff > SYNC_THRESHOLD) {
         playerRef.current.seekTo(targetTime, 'seconds');
       }
     }
     
-    // Sync Local Audio (Re-align if drifted significantly)
+    // 2. Sync Local Audio (WebRTC Stream)
     if (currentTrack?.source === TrackSource.LOCAL && audioRef.current) {
-       // If we are supposed to be playing but audio is paused, force play
+       // Ensure play state matches Host
        if (isPlaying && audioRef.current.paused && (audioRef.current.readyState >= 3 || audioRef.current.srcObject)) {
          audioRef.current.play().catch(() => {});
+       } else if (!isPlaying && !audioRef.current.paused) {
+         audioRef.current.pause();
        }
        
-       // Only seek if not a live stream (Host file)
-       // Note: P2P streams are live, seeking isn't really possible/necessary on the stream itself usually
-       // but for the purpose of "Catch Up", we just rely on the stream being live.
+       // Note: We generally do not "seek" the live WebRTC stream, 
+       // as listeners just hear what the host is currently broadcasting.
+       // The logic above ensures the connection remains active.
     }
   }, [roomState, isDJ, isPlaying, timestamp, lastUpdated, currentTrack]);
 
@@ -205,12 +216,13 @@ export const Player: React.FC = () => {
   useEffect(() => {
     if (!isDJ || !isPlaying) return;
     
+    // Broadcast exact time every 1 second to keep listeners tight
     const interval = setInterval(() => {
       const time = getInternalTime();
       if (!isNaN(time)) {
           updateSync(true, time);
       }
-    }, 2000);
+    }, 1000);
     
     return () => clearInterval(interval);
   }, [isDJ, isPlaying, updateSync]);
@@ -227,6 +239,7 @@ export const Player: React.FC = () => {
               curr = getInternalTime();
               dur = getInternalDuration();
           } else {
+              // Predict current time for smooth UI based on last packet
               const latency = (Date.now() - lastUpdated) / 1000;
               curr = timestamp + (isPlaying ? latency : 0);
               dur = currentTrack?.duration || duration; 
@@ -236,7 +249,7 @@ export const Player: React.FC = () => {
           if (!isNaN(dur) && dur > 0) setDuration(dur);
       };
 
-      const interval = setInterval(updateUI, 250);
+      const interval = setInterval(updateUI, 200); // 5fps UI update
       return () => clearInterval(interval);
   }, [isSeeking, isDJ, currentTrack, isPlaying, timestamp, lastUpdated, duration]);
 
@@ -348,7 +361,7 @@ export const Player: React.FC = () => {
         {/* YouTube Player */}
         <div className="absolute top-[-9999px] left-[-9999px]">
            {currentTrack.source === TrackSource.YOUTUBE && (
-             <ReactPlayer
+             <ReactPlayerAny
                ref={playerRef}
                key={currentTrack.id} 
                url={`https://www.youtube.com/watch?v=${currentTrack.url}`}
@@ -366,7 +379,7 @@ export const Player: React.FC = () => {
                      controls: 0
                    } 
                  }
-               }} 
+               } as any} 
              />
            )}
         </div>
