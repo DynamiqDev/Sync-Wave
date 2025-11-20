@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useRoom } from '../context/RoomContext';
 import { Track, TrackSource } from '../types';
-import { Plus, FileAudio, Sparkles, Loader2, Play } from 'lucide-react';
+import { Plus, FileAudio, Sparkles, Loader2, Play, Trash2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { generatePlaylistSuggestions } from '../services/geminiService';
 
@@ -12,6 +12,8 @@ export const Queue: React.FC = () => {
   
   // Add Form State
   const [ytUrl, setYtUrl] = useState('');
+  const [ytTitle, setYtTitle] = useState('');
+  const [ytArtist, setYtArtist] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
   const handleAddYouTube = () => {
@@ -21,14 +23,16 @@ export const Queue: React.FC = () => {
       const track: Track = {
         id: uuidv4(),
         source: TrackSource.YOUTUBE,
-        title: `YouTube Track ${idMatch[1]}`,
-        artist: 'Unknown Artist',
+        title: ytTitle.trim() || `YouTube Track ${idMatch[1]}`,
+        artist: ytArtist.trim() || 'Unknown Artist',
         url: idMatch[1],
         duration: 0,
         addedBy: 'DJ',
       };
       addToQueue(track);
       setYtUrl('');
+      setYtTitle('');
+      setYtArtist('');
       setTab('queue');
     }
   };
@@ -124,18 +128,35 @@ export const Queue: React.FC = () => {
              {/* YouTube Input */}
              <div className="space-y-2">
                <label className="text-xs font-mono text-zinc-500 uppercase">Add via YouTube URL</label>
-               <div className="flex gap-2">
+               <div className="flex flex-col gap-2">
                  <input 
                    value={ytUrl}
                    onChange={(e) => setYtUrl(e.target.value)}
                    placeholder="https://youtube.com/..."
-                   className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:border-cyan-500 outline-none"
+                   className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:border-cyan-500 outline-none"
                  />
+                 
+                 <div className="flex gap-2">
+                   <input 
+                     value={ytTitle}
+                     onChange={(e) => setYtTitle(e.target.value)}
+                     placeholder="Song Title"
+                     className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:border-cyan-500 outline-none"
+                   />
+                   <input 
+                     value={ytArtist}
+                     onChange={(e) => setYtArtist(e.target.value)}
+                     placeholder="Artist"
+                     className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:border-cyan-500 outline-none"
+                   />
+                 </div>
+
                  <button 
                    onClick={handleAddYouTube}
-                   className="bg-zinc-800 hover:bg-zinc-700 p-2 rounded-lg transition-colors"
+                   className="w-full bg-zinc-800 hover:bg-zinc-700 p-2 rounded-lg transition-colors flex items-center justify-center gap-2"
                  >
                    <Plus className="w-5 h-5 text-white" />
+                   <span className="text-sm font-medium">Add to Queue</span>
                  </button>
                </div>
              </div>

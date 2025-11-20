@@ -54,14 +54,74 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const queueRef = useRef(queue);
   const localStreamRef = useRef(localStream);
   const isHostRef = useRef(isHost);
+  const usersRef = useRef(users);
   
   // Keep refs synced
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
   useEffect(() => { queueRef.current = queue; }, [queue]);
   useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
   useEffect(() => { isHostRef.current = isHost; }, [isHost]);
+  useEffect(() => { usersRef.current = users; }, [users]);
 
   const isDJ = isHost; 
+
+  const broadcast = useCallback((packet: SyncPacket) => {
+    connectionsRef.current.forEach(conn => {
+      if (conn.open) conn.send(packet);
+    });
+  }, []);
+
+  const handleIncomingData = useCallback((data: any, conn: DataConnection) => {
+    const packet = data as SyncPacket;
+    
+    switch (packet.type) {
+      case 'SYNC':
+        setRoomState(packet.payload);
+        break;
+        
+      case 'QUEUE_UPDATE':
+        setQueue(packet.payload);
+        // If Host receives queue update from a DJ, relay to others
+        if (isHostRef.current) {
+           broadcast(packet);
+        }
+        break;
+        
+      case 'USER_LIST':
+        setUsers(packet.payload);
+        break;
+        
+      case 'JOIN':
+        if (isHostRef.current) {
+            const newName = packet.payload.name;
+            const newUser: User = {
+                id: conn.peer,
+                name: newName,
+                isDJ: false,
+                isHost: false
+            };
+            
+            // Avoid duplicates
+            if (!usersRef.current.find(u => u.id === newUser.id)) {
+                const updatedUsers = [...usersRef.current, newUser];
+                setUsers(updatedUsers);
+                usersRef.current = updatedUsers; // Instant update for ref
+                
+                // Broadcast new user list to everyone
+                broadcast({ type: 'USER_LIST', payload: updatedUsers });
+
+                // CRITICAL: Send current state to the specific new user immediately
+                // We use a slight delay to ensure their listeners are ready
+                setTimeout(() => {
+                    conn.send({ type: 'SYNC', payload: roomStateRef.current });
+                    conn.send({ type: 'QUEUE_UPDATE', payload: queueRef.current });
+                    conn.send({ type: 'USER_LIST', payload: updatedUsers });
+                }, 500);
+            }
+        }
+        break;
+    }
+  }, [broadcast]);
 
   const initializePeer = useCallback((id: string | null = null) => {
     const newPeer = id ? new Peer(id) : new Peer();
@@ -75,14 +135,10 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Incoming Data Connection
       conn.on('data', (data: any) => handleIncomingData(data, conn));
       conn.on('open', () => {
-         // Send initial state
-         conn.send({ type: 'SYNC', payload: roomStateRef.current });
-         conn.send({ type: 'QUEUE_UPDATE', payload: queueRef.current });
          connectionsRef.current.push(conn);
 
          // If we are currently streaming a local file, call the new user
          if (isHostRef.current && localStreamRef.current && roomStateRef.current.currentTrack?.source === TrackSource.LOCAL) {
-             console.log("New user joined during playback, streaming to:", conn.peer);
              const call = newPeer.call(conn.peer, localStreamRef.current);
              mediaConnectionsRef.current.push(call);
          }
@@ -98,24 +154,11 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setPeer(newPeer);
     return newPeer;
-  }, []);
-
-  const handleIncomingData = (data: any, conn: DataConnection) => {
-    const packet = data as SyncPacket;
-    switch (packet.type) {
-      case 'SYNC':
-        setRoomState(packet.payload);
-        break;
-      case 'QUEUE_UPDATE':
-        setQueue(packet.payload);
-        break;
-    }
-  };
+  }, [handleIncomingData]);
 
   // Reactive effect to broadcast stream when it becomes available (track changes)
   useEffect(() => {
     if (isHost && localStream && peer && roomState.isPlaying) {
-      console.log("Broadcasting new local stream to all peers");
       connectionsRef.current.forEach(conn => {
         const call = peer.call(conn.peer, localStream);
         mediaConnectionsRef.current.push(call);
@@ -127,30 +170,26 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUsername(name);
     setIsHost(true);
     const id = uuidv4().slice(0, 6).toUpperCase();
+    // Use the Room ID as the Peer ID for the host so it's easy to connect
     initializePeer(id);
     setRoomId(id);
-    setUsers([{ id: 'host', name, isDJ: true, isHost: true }]);
+    setUsers([{ id: id, name, isDJ: true, isHost: true }]);
   };
 
   const joinRoom = (id: string, name: string) => {
     setUsername(name);
     setIsHost(false);
     setRoomId(id);
-    const p = initializePeer();
+    const p = initializePeer(); // Client gets random ID
     
     p.on('open', (myId) => {
       const conn = p.connect(id);
       conn.on('open', () => {
         connectionsRef.current.push(conn);
+        // Send JOIN to notify host
         conn.send({ type: 'JOIN', payload: { name } });
       });
       conn.on('data', (data) => handleIncomingData(data, conn));
-    });
-  };
-
-  const broadcast = (packet: SyncPacket) => {
-    connectionsRef.current.forEach(conn => {
-      if (conn.open) conn.send(packet);
     });
   };
 
@@ -173,7 +212,6 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     setRoomState(newState);
     broadcast({ type: 'SYNC', payload: newState });
-    // Note: Player component updates localStream triggering broadcast effect
   };
 
   const skipTrack = () => {

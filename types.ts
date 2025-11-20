@@ -1,3 +1,4 @@
+
 export enum TrackSource {
   YOUTUBE = 'YOUTUBE',
   LOCAL = 'LOCAL',
@@ -29,6 +30,6 @@ export interface RoomState {
 }
 
 export interface SyncPacket {
-  type: 'SYNC' | 'QUEUE_UPDATE' | 'REQUEST_SYNC' | 'BEAT_SYNC';
+  type: 'SYNC' | 'QUEUE_UPDATE' | 'REQUEST_SYNC' | 'BEAT_SYNC' | 'JOIN' | 'USER_LIST';
   payload: any;
 }
