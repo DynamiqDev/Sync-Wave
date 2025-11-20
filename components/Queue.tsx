@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useRoom } from '../context/RoomContext';
 import { Track, TrackSource } from '../types';
-import { Plus, Music, FileAudio, Sparkles, Search, Loader2, Play } from 'lucide-react';
+import { Plus, FileAudio, Sparkles, Loader2, Play } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { generatePlaylistSuggestions } from '../services/geminiService';
 
 export const Queue: React.FC = () => {
-  const { queue, addToQueue, playTrack, isDJ, currentTrack } = useRoom();
+  const { queue, addToQueue, playTrack, isDJ, roomState } = useRoom();
+  const { currentTrack } = roomState;
   const [tab, setTab] = useState<'queue' | 'add'>('queue');
   
   // Add Form State

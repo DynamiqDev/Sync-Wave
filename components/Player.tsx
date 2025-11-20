@@ -10,7 +10,8 @@ export const Player: React.FC = () => {
   const { currentTrack, isPlaying, timestamp, lastUpdated } = roomState;
 
   // Refs
-  const playerRef = useRef<ReactPlayer>(null);
+  // using any for playerRef to avoid strict type issues with the library export
+  const playerRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   
   // State
@@ -357,8 +358,14 @@ export const Player: React.FC = () => {
                height="100%"
                onDuration={handleDuration}
                config={{ 
-                 playerVars: { start: Math.floor(timestamp), autoplay: 1, controls: 0 },
-                 youtube: { playerVars: { disablekb: 1 } }
+                 youtube: { 
+                   playerVars: { 
+                     disablekb: 1,
+                     start: Math.floor(timestamp),
+                     autoplay: 1,
+                     controls: 0
+                   } 
+                 }
                }} 
              />
            )}

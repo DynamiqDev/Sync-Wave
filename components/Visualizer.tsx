@@ -8,7 +8,7 @@ interface VisualizerProps {
 export const Visualizer: React.FC<VisualizerProps> = ({ audioSource, context }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const requestRef = useRef<number>();
+  const requestRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (!audioSource || !context || !canvasRef.current) return;
