@@ -1,0 +1,8 @@
+{
+  "name": "SyncWAVE",
+  "description": "A real-time P2P music synchronization platform with DJ controls and AI playlist generation.",
+  "permissions": [
+    "microphone"
+  ],
+  "requestFramePermissions": []
+}
