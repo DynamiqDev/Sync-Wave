@@ -4,8 +4,14 @@ import { Track, TrackSource } from "../types";
 import { v4 as uuidv4 } from 'uuid';
 
 const getAiClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) return null;
+  // Safely access process.env to avoid ReferenceError in strict browser environments
+  // The actual key is injected by Vite/Vercel during build
+  const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : undefined;
+  
+  if (!apiKey) {
+    console.warn("No API Key found. Please set API_KEY in your environment variables.");
+    return null;
+  }
   return new GoogleGenAI({ apiKey });
 };
 
@@ -15,7 +21,6 @@ export const generatePlaylistSuggestions = async (
 ): Promise<Track[]> => {
   const ai = getAiClient();
   if (!ai) {
-    console.warn("No API Key found for Gemini");
     return [];
   }
 
