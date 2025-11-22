@@ -1,12 +1,15 @@
+
 import React, { useEffect, useState } from 'react';
 import { useRoom } from '../context/RoomContext';
 import { Player } from './Player';
 import { Queue } from './Queue';
-import { Copy, Check, Users, Wifi } from 'lucide-react';
+import { UserList } from './UserList';
+import { Copy, Check, Users, Wifi, Shield } from 'lucide-react';
 
 export const Room: React.FC = () => {
-  const { roomId, users, isHost, connected } = useRoom();
+  const { roomId, users, isHost, connected, me } = useRoom();
   const [copied, setCopied] = useState(false);
+  const [showUserList, setShowUserList] = useState(false);
 
   // Wake Lock API
   useEffect(() => {
@@ -37,11 +40,11 @@ export const Room: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col pb-8">
       {/* Header */}
-      <header className="px-6 py-4 border-b border-zinc-800/50 bg-zinc-950/50 backdrop-blur-md sticky top-0 z-50">
+      <header className="px-6 py-4 border-b border-zinc-800/50 bg-zinc-950/50 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500'}`} />
-            <span className="font-mono font-bold text-lg tracking-widest">SyncWAVE</span>
+            <span className="font-mono font-bold text-lg tracking-widest hidden sm:block">SyncWAVE</span>
           </div>
 
           <div className="flex items-center gap-2 bg-zinc-900 py-1.5 px-3 rounded-full border border-zinc-800">
@@ -52,12 +55,19 @@ export const Room: React.FC = () => {
              </button>
           </div>
 
-          <div className="flex items-center gap-2 text-sm text-zinc-400">
-             <Users size={16} />
-             <span>{users.length}</span>
-          </div>
+          <button 
+            onClick={() => setShowUserList(true)}
+            className="flex items-center gap-2 text-sm bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-full transition-colors border border-zinc-700"
+          >
+             <Users size={16} className="text-zinc-400" />
+             <span className="font-bold text-white">{users.length}</span>
+             {isHost && <Shield size={14} className="text-yellow-500 ml-1" />}
+          </button>
         </div>
       </header>
+
+      {/* User List Modal */}
+      {showUserList && <UserList onClose={() => setShowUserList(false)} />}
 
       {/* Main Content */}
       <main className="flex-1 p-4 md:p-6 max-w-5xl mx-auto w-full grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -70,13 +80,20 @@ export const Room: React.FC = () => {
            <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 text-sm text-zinc-400">
               <h3 className="font-bold text-zinc-200 mb-2 flex items-center gap-2">
                 <Wifi size={16} className="text-cyan-500" />
-                Synchronization Status
+                Connection Status
               </h3>
-              <p>
+              <p className="mb-2">
                 {isHost 
-                  ? "You are the HOST. Your playback controls the room. Streaming local audio requires this tab to stay open." 
-                  : "You are a LISTENER. Playback is synchronized to the Host. Audio will auto-seek if you drift > 2s."}
+                  ? "You are the HOST (Admin). You can kick users and assign DJ permissions via the User List." 
+                  : "You are connected. Permissions are managed by the Host."}
               </p>
+              {me && (
+                <div className="flex gap-2 mt-2">
+                   {me.permissions.canPlay && <span className="text-[10px] bg-green-900/30 text-green-400 px-2 py-0.5 rounded border border-green-900/50">PLAYBACK</span>}
+                   {me.permissions.canQueue && <span className="text-[10px] bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded border border-blue-900/50">QUEUE</span>}
+                   {me.permissions.canSkip && <span className="text-[10px] bg-purple-900/30 text-purple-400 px-2 py-0.5 rounded border border-purple-900/50">SKIP</span>}
+                </div>
+              )}
            </div>
         </div>
 

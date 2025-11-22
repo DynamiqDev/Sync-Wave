@@ -1,20 +1,22 @@
+
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import Peer, { DataConnection, MediaConnection } from 'peerjs';
 import { v4 as uuidv4 } from 'uuid';
-import { RoomState, Track, User, TrackSource, SyncPacket } from '../types';
+import { RoomState, Track, User, TrackSource, SyncPacket, UserPermissions } from '../types';
 
 interface RoomContextType {
   peerId: string | null;
   roomId: string | null;
   isHost: boolean;
-  isDJ: boolean;
   connected: boolean;
   users: User[];
   queue: Track[];
   roomState: RoomState;
   audioStream: MediaStream | null;
+  me: User | null; // Current user object with permissions
   createRoom: (username: string) => void;
   joinRoom: (roomId: string, username: string) => void;
+  leaveRoom: () => void;
   addToQueue: (track: Track) => void;
   playTrack: (track: Track) => void;
   skipTrack: () => void;
@@ -22,9 +24,24 @@ interface RoomContextType {
   broadcastSeek: (time: number) => void;
   localStream: MediaStream | null;
   setLocalStream: (stream: MediaStream | null) => void;
+  // Admin functions
+  kickUser: (userId: string) => void;
+  updateUserPermissions: (userId: string, permissions: UserPermissions) => void;
 }
 
 const RoomContext = createContext<RoomContextType | undefined>(undefined);
+
+const DEFAULT_PERMISSIONS: UserPermissions = {
+  canPlay: false,
+  canQueue: false,
+  canSkip: false,
+};
+
+const HOST_PERMISSIONS: UserPermissions = {
+  canPlay: true,
+  canQueue: true,
+  canSkip: true,
+};
 
 export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [peer, setPeer] = useState<Peer | null>(null);
@@ -63,7 +80,7 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => { isHostRef.current = isHost; }, [isHost]);
   useEffect(() => { usersRef.current = users; }, [users]);
 
-  const isDJ = isHost; 
+  const me = users.find(u => u.id === peerId) || null;
 
   const broadcast = useCallback((packet: SyncPacket) => {
     connectionsRef.current.forEach(conn => {
@@ -71,47 +88,66 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
+  const leaveRoom = useCallback(() => {
+    // Close all connections
+    connectionsRef.current.forEach(c => c.close());
+    mediaConnectionsRef.current.forEach(c => c.close());
+    if (peer) peer.destroy();
+
+    // Reset State
+    setPeer(null);
+    setPeerId(null);
+    setRoomId(null);
+    setConnected(false);
+    setUsers([]);
+    setQueue([]);
+    setLocalStream(null);
+    setAudioStream(null);
+    setRoomState({ currentTrack: null, isPlaying: false, timestamp: 0, lastUpdated: Date.now() });
+    // Reload window to ensure clean slate (simplest for WebRTC cleanup)
+    window.location.reload();
+  }, [peer]);
+
   const handleIncomingData = useCallback((data: any, conn: DataConnection) => {
     const packet = data as SyncPacket;
     
     switch (packet.type) {
       case 'SYNC':
-        setRoomState(packet.payload);
+        // Overwrite lastUpdated with local time to fix clock skew
+        setRoomState({ ...packet.payload, lastUpdated: Date.now() });
         break;
         
       case 'QUEUE_UPDATE':
         setQueue(packet.payload);
-        // If Host receives queue update from a DJ, relay to others
-        if (isHostRef.current) {
-           broadcast(packet);
-        }
+        if (isHostRef.current) broadcast(packet);
         break;
         
       case 'USER_LIST':
         setUsers(packet.payload);
         break;
         
+      case 'KICK':
+        alert("You have been kicked from the room by the host.");
+        leaveRoom();
+        break;
+
       case 'JOIN':
         if (isHostRef.current) {
             const newName = packet.payload.name;
             const newUser: User = {
                 id: conn.peer,
                 name: newName,
-                isDJ: false,
-                isHost: false
+                isHost: false,
+                permissions: DEFAULT_PERMISSIONS
             };
             
-            // Avoid duplicates
             if (!usersRef.current.find(u => u.id === newUser.id)) {
                 const updatedUsers = [...usersRef.current, newUser];
                 setUsers(updatedUsers);
-                usersRef.current = updatedUsers; // Instant update for ref
+                usersRef.current = updatedUsers;
                 
-                // Broadcast new user list to everyone
                 broadcast({ type: 'USER_LIST', payload: updatedUsers });
 
-                // CRITICAL: Send current state to the specific new user immediately
-                // We use a slight delay to ensure their listeners are ready
                 setTimeout(() => {
                     conn.send({ type: 'SYNC', payload: roomStateRef.current });
                     conn.send({ type: 'QUEUE_UPDATE', payload: queueRef.current });
@@ -121,7 +157,7 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         break;
     }
-  }, [broadcast]);
+  }, [broadcast, leaveRoom]);
 
   const initializePeer = useCallback((id: string | null = null) => {
     const newPeer = id ? new Peer(id) : new Peer();
@@ -132,16 +168,24 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     newPeer.on('connection', (conn) => {
-      // Incoming Data Connection
       conn.on('data', (data: any) => handleIncomingData(data, conn));
       conn.on('open', () => {
          connectionsRef.current.push(conn);
-
-         // If we are currently streaming a local file, call the new user
+         // If Host streaming local file, call new user
          if (isHostRef.current && localStreamRef.current && roomStateRef.current.currentTrack?.source === TrackSource.LOCAL) {
              const call = newPeer.call(conn.peer, localStreamRef.current);
              mediaConnectionsRef.current.push(call);
          }
+      });
+      conn.on('close', () => {
+        // Remove user on disconnect (if host)
+        if (isHostRef.current) {
+            const updatedUsers = usersRef.current.filter(u => u.id !== conn.peer);
+            setUsers(updatedUsers);
+            usersRef.current = updatedUsers;
+            broadcast({ type: 'USER_LIST', payload: updatedUsers });
+        }
+        connectionsRef.current = connectionsRef.current.filter(c => c.peer !== conn.peer);
       });
     });
 
@@ -154,9 +198,9 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setPeer(newPeer);
     return newPeer;
-  }, [handleIncomingData]);
+  }, [handleIncomingData, broadcast]);
 
-  // Reactive effect to broadcast stream when it becomes available (track changes)
+  // Stream broadcast effect
   useEffect(() => {
     if (isHost && localStream && peer && roomState.isPlaying) {
       connectionsRef.current.forEach(conn => {
@@ -170,30 +214,60 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUsername(name);
     setIsHost(true);
     const id = uuidv4().slice(0, 6).toUpperCase();
-    // Use the Room ID as the Peer ID for the host so it's easy to connect
     initializePeer(id);
     setRoomId(id);
-    setUsers([{ id: id, name, isDJ: true, isHost: true }]);
+    // Host gets full permissions
+    setUsers([{ id: id, name, isHost: true, permissions: HOST_PERMISSIONS }]);
   };
 
   const joinRoom = (id: string, name: string) => {
     setUsername(name);
     setIsHost(false);
     setRoomId(id);
-    const p = initializePeer(); // Client gets random ID
+    const p = initializePeer();
     
     p.on('open', (myId) => {
       const conn = p.connect(id);
       conn.on('open', () => {
         connectionsRef.current.push(conn);
-        // Send JOIN to notify host
         conn.send({ type: 'JOIN', payload: { name } });
       });
       conn.on('data', (data) => handleIncomingData(data, conn));
     });
   };
 
+  // --- Admin Functions ---
+
+  const kickUser = (userId: string) => {
+    if (!isHost) return;
+    
+    const targetConn = connectionsRef.current.find(c => c.peer === userId);
+    if (targetConn) {
+        targetConn.send({ type: 'KICK', payload: {} });
+        setTimeout(() => targetConn.close(), 500); // Give time to send packet
+    }
+
+    const updatedUsers = users.filter(u => u.id !== userId);
+    setUsers(updatedUsers);
+    broadcast({ type: 'USER_LIST', payload: updatedUsers });
+  };
+
+  const updateUserPermissions = (userId: string, newPermissions: UserPermissions) => {
+    if (!isHost) return;
+
+    const updatedUsers = users.map(u => 
+        u.id === userId ? { ...u, permissions: newPermissions } : u
+    );
+    setUsers(updatedUsers);
+    broadcast({ type: 'USER_LIST', payload: updatedUsers });
+  };
+
+  // --- Playback Functions (Check Permissions) ---
+
   const addToQueue = (track: Track) => {
+    // Check permissions: Host or has canQueue
+    if (!isHost && !me?.permissions.canQueue) return;
+
     const newQueue = [...queue, track];
     setQueue(newQueue);
     broadcast({ type: 'QUEUE_UPDATE', payload: newQueue });
@@ -204,6 +278,8 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const playTrack = (track: Track) => {
+    if (!isHost && !me?.permissions.canPlay) return;
+
     const newState: RoomState = {
       currentTrack: track,
       isPlaying: true,
@@ -215,7 +291,8 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const skipTrack = () => {
-    if (!isHost) return;
+    if (!isHost && !me?.permissions.canSkip) return;
+
     const currentIndex = queue.findIndex(t => t.id === roomState.currentTrack?.id);
     if (currentIndex !== -1 && currentIndex < queue.length - 1) {
       playTrack(queue[currentIndex + 1]);
@@ -223,14 +300,14 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateSync = (isPlaying: boolean, time: number) => {
-    if (!isHost) return;
+    if (!isHost && !me?.permissions.canPlay) return;
     const newState = { ...roomState, isPlaying, timestamp: time, lastUpdated: Date.now() };
     setRoomState(newState);
     broadcast({ type: 'SYNC', payload: newState });
   };
 
   const broadcastSeek = (time: number) => {
-     if (!isHost) return;
+     if (!isHost && !me?.permissions.canPlay) return;
      const newState = { ...roomState, timestamp: time, lastUpdated: Date.now() };
      setRoomState(newState);
      broadcast({ type: 'SYNC', payload: newState });
@@ -238,24 +315,13 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <RoomContext.Provider value={{
-      peerId,
-      roomId,
-      isHost,
-      isDJ,
-      connected,
-      users,
-      queue,
-      roomState,
-      audioStream,
-      createRoom,
-      joinRoom,
-      addToQueue,
-      playTrack,
-      skipTrack,
-      updateSync,
-      broadcastSeek,
-      localStream,
-      setLocalStream
+      peerId, roomId, isHost, connected,
+      users, queue, roomState, audioStream, me,
+      createRoom, joinRoom, leaveRoom,
+      addToQueue, playTrack, skipTrack,
+      updateSync, broadcastSeek,
+      localStream, setLocalStream,
+      kickUser, updateUserPermissions
     }}>
       {children}
     </RoomContext.Provider>

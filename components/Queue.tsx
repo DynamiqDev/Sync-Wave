@@ -1,15 +1,19 @@
+
 import React, { useState } from 'react';
 import { useRoom } from '../context/RoomContext';
 import { Track, TrackSource } from '../types';
-import { Plus, FileAudio, Sparkles, Loader2, Play, Trash2 } from 'lucide-react';
+import { Plus, FileAudio, Sparkles, Loader2, Play, Lock } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { generatePlaylistSuggestions } from '../services/geminiService';
 
 export const Queue: React.FC = () => {
-  const { queue, addToQueue, playTrack, isDJ, roomState } = useRoom();
+  const { queue, addToQueue, playTrack, roomState, me, isHost } = useRoom();
   const { currentTrack } = roomState;
   const [tab, setTab] = useState<'queue' | 'add'>('queue');
   
+  const canQueue = me?.permissions.canQueue || false;
+  const canPlay = me?.permissions.canPlay || false;
+
   // Add Form State
   const [ytUrl, setYtUrl] = useState('');
   const [ytTitle, setYtTitle] = useState('');
@@ -17,7 +21,6 @@ export const Queue: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
 
   const handleAddYouTube = () => {
-    // Very basic YT ID extraction
     const idMatch = ytUrl.match(/(?:v=|\/)([0-9A-Za-z_-]{11})/);
     if (idMatch) {
       const track: Track = {
@@ -27,13 +30,10 @@ export const Queue: React.FC = () => {
         artist: ytArtist.trim() || 'Unknown Artist',
         url: idMatch[1],
         duration: 0,
-        addedBy: 'DJ',
+        addedBy: me?.name || 'Unknown',
       };
       addToQueue(track);
-      setYtUrl('');
-      setYtTitle('');
-      setYtArtist('');
-      setTab('queue');
+      setYtUrl(''); setYtTitle(''); setYtArtist(''); setTab('queue');
     }
   };
 
@@ -46,7 +46,7 @@ export const Queue: React.FC = () => {
         title: file.name.replace(/\.[^/.]+$/, ""),
         artist: 'Local File',
         duration: 0,
-        addedBy: 'Host',
+        addedBy: me?.name || 'Host',
         file: file
       };
       addToQueue(track);
@@ -59,11 +59,7 @@ export const Queue: React.FC = () => {
     setIsGenerating(true);
     const suggestions = await generatePlaylistSuggestions(currentTrack.title, 'party upbeat sync');
     setIsGenerating(false);
-    
-    // Automatically add first suggestion to queue for demo
-    if (suggestions.length > 0) {
-      addToQueue(suggestions[0]);
-    }
+    if (suggestions.length > 0) addToQueue(suggestions[0]);
   };
 
   return (
@@ -76,14 +72,15 @@ export const Queue: React.FC = () => {
           >
             QUEUE ({queue.length})
           </button>
-          {isDJ && (
-            <button 
-              onClick={() => setTab('add')}
-              className={`text-sm font-bold ${tab === 'add' ? 'text-cyan-400' : 'text-zinc-500'}`}
-            >
-              ADD TRACKS
-            </button>
-          )}
+          
+          <button 
+            onClick={() => canQueue ? setTab('add') : null}
+            className={`text-sm font-bold flex items-center gap-1 ${tab === 'add' ? 'text-cyan-400' : canQueue ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-700 cursor-not-allowed'}`}
+            title={canQueue ? "Add Tracks" : "No queue permission"}
+          >
+            ADD TRACKS
+            {!canQueue && <Lock size={12} />}
+          </button>
         </div>
       </div>
 
@@ -100,12 +97,12 @@ export const Queue: React.FC = () => {
                return (
                  <div 
                    key={track.id} 
-                   onClick={() => isDJ && playTrack(track)}
+                   onClick={() => canPlay && playTrack(track)}
                    className={`flex items-center gap-3 p-3 rounded-lg border transition-all group ${
                      isActive 
                        ? 'bg-cyan-900/20 border-cyan-500/30' 
                        : 'bg-zinc-950/50 border-zinc-800/50 hover:border-zinc-700'
-                   } ${isDJ ? 'cursor-pointer hover:bg-zinc-800/50' : ''}`}
+                   } ${canPlay ? 'cursor-pointer hover:bg-zinc-800/50' : ''}`}
                  >
                    <div className={`text-xs font-mono w-6 ${isActive ? 'text-cyan-400' : 'text-zinc-600'}`}>
                       {isActive ? <Play size={12} className="fill-current animate-pulse"/> : i + 1}
@@ -161,15 +158,17 @@ export const Queue: React.FC = () => {
                </div>
              </div>
 
-             {/* Local File Input */}
-             <div className="space-y-2">
-               <label className="text-xs font-mono text-zinc-500 uppercase">Stream Local File (P2P)</label>
-               <label className="flex items-center justify-center gap-2 w-full p-4 border-2 border-dashed border-zinc-800 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition-colors">
-                  <FileAudio className="w-5 h-5 text-cyan-500" />
-                  <span className="text-sm text-zinc-400">Select MP3 File</span>
-                  <input type="file" accept="audio/*" className="hidden" onChange={handleFileUpload} />
-               </label>
-             </div>
+             {/* Local File Input - Only Host can stream local files due to P2P constraints, even if DJ */}
+             {isHost && (
+               <div className="space-y-2">
+                 <label className="text-xs font-mono text-zinc-500 uppercase">Stream Local File (P2P)</label>
+                 <label className="flex items-center justify-center gap-2 w-full p-4 border-2 border-dashed border-zinc-800 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition-colors">
+                    <FileAudio className="w-5 h-5 text-cyan-500" />
+                    <span className="text-sm text-zinc-400">Select MP3 File</span>
+                    <input type="file" accept="audio/*" className="hidden" onChange={handleFileUpload} />
+                 </label>
+               </div>
+             )}
 
              {/* AI Suggestion */}
              <div className="pt-4 border-t border-zinc-800">
@@ -181,7 +180,6 @@ export const Queue: React.FC = () => {
                   {isGenerating ? <Loader2 className="animate-spin w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
                   <span>AI Suggest Next Track</span>
                 </button>
-                <p className="text-[10px] text-zinc-500 text-center mt-2">Powered by Gemini 2.5 Flash</p>
              </div>
           </div>
         )}

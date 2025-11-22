@@ -15,11 +15,17 @@ export interface Track {
   file?: File; // For local files (Host only)
 }
 
+export interface UserPermissions {
+  canPlay: boolean;  // Play/Pause
+  canQueue: boolean; // Add to queue
+  canSkip: boolean;  // Skip tracks
+}
+
 export interface User {
   id: string;
   name: string;
-  isDJ: boolean;
   isHost: boolean;
+  permissions: UserPermissions;
 }
 
 export interface RoomState {
@@ -30,6 +36,6 @@ export interface RoomState {
 }
 
 export interface SyncPacket {
-  type: 'SYNC' | 'QUEUE_UPDATE' | 'REQUEST_SYNC' | 'BEAT_SYNC' | 'JOIN' | 'USER_LIST';
+  type: 'SYNC' | 'QUEUE_UPDATE' | 'REQUEST_SYNC' | 'BEAT_SYNC' | 'JOIN' | 'USER_LIST' | 'KICK';
   payload: any;
 }
